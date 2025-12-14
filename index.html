@@ -1,279 +1,164 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
-<title>Mario Birthday Invitation</title>
-<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-
-<style>
-body {
-  margin:0;
-  background:#000;
-  overflow:hidden;
-  touch-action:none;
-}
-canvas {
-  display:block;
-  margin:auto;
-  image-rendering: pixelated;
-}
-
-/* CRT effect */
-.crt {
-  position: fixed;
-  inset: 0;
-  pointer-events: none;
-  background:
-    repeating-linear-gradient(
-      to bottom,
-      rgba(255,255,255,0.03) 0px,
-      rgba(0,0,0,0.03) 1px,
-      rgba(0,0,0,0.03) 2px
-    );
-}
-
-/* Touch controls */
-.touch-controls {
-  position: fixed;
-  bottom: 20px;
-  width: 100%;
-  pointer-events: none;
-}
-.btn {
-  width: 70px;
-  height: 70px;
-  background: rgba(0,0,0,0.6);
-  color: white;
-  font-size: 32px;
-  border-radius: 50%;
-  text-align: center;
-  line-height: 70px;
-  pointer-events: auto;
-  user-select: none;
-}
-.left { position:absolute; left:20px; }
-.right { position:absolute; left:110px; }
-.jump {
-  position:absolute; right:20px;
-  background: rgba(220,0,0,0.8);
-}
-</style>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mario Sprite Animation Demo</title>
+    <style>
+        body {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+            background-color: #222;
+        }
+        canvas {
+            border: 4px solid #fff;
+            image-rendering: crisp-edges; /* For sharp pixel art scaling */
+            image-rendering: pixelated;
+        }
+    </style>
 </head>
-
 <body>
 
-<canvas id="game" width="256" height="144"></canvas>
+    <canvas id="gameCanvas" width="320" height="240"></canvas>
 
-<div class="crt"></div>
+    <script>
+        // --- Setup ---
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        // Scale the canvas for better visibility of the small sprite
+        const SCALE = 3;
+        canvas.style.width = canvas.width * SCALE + 'px';
+        canvas.style.height = canvas.height * SCALE + 'px';
 
-<div class="touch-controls">
-  <div class="btn left" id="btnLeft">⬅️</div>
-  <div class="btn right" id="btnRight">➡️</div>
-  <div class="btn jump" id="btnJump">⬆️</div>
-</div>
+        const SPRITE_SIZE = 16; // 16x16 pixels
+        const FRAME_DURATION = 8; // Update frame every 8 game loop cycles (slower is smoother)
+        const WALKING_FRAMES = 3; 
 
-<script>
-const canvas = document.getElementById("game");
-const ctx = canvas.getContext("2d");
-ctx.imageSmoothingEnabled = false;
+        const marioSprite = new Image();
+        marioSprite.src = "mario_sprites.png"; // **MUST be in the same directory**
+        marioSprite.onload = () => {
+            console.log("Sprite sheet loaded. Starting game loop.");
+            gameLoop(); // Start the loop only after the image is ready
+        };
+        marioSprite.onerror = () => {
+             console.error("Failed to load mario_sprites.png. Check the file path.");
+        };
 
-// scale up
-canvas.style.width = "1000px";
-canvas.style.height = "560px";
+        // --- Game State ---
+        let frame = 0;
+        let frameTimer = 0;
+        
+        const player = {
+            x: 50,
+            y: canvas.height - SPRITE_SIZE,
+            isWalking: false,
+            onGround: true,
+            isJumping: false
+        };
 
-/* AUDIO */
-const sounds = {
-  music: new Audio("sounds/music.mp3"),
-  jump: new Audio("sounds/jump.wav"),
-  box: new Audio("sounds/box.wav"),
-  coin: new Audio("sounds/box.wav"),
-  power: new Audio("sounds/powerup.wav"),
-  flag: new Audio("sounds/flag.wav"),
-  win: new Audio("sounds/win.wav")
-};
-sounds.music.loop = true;
-sounds.music.volume = 0.4;
-document.addEventListener("pointerdown",()=>sounds.music.play(),{once:true});
+        // Simple key state tracking
+        const keys = {};
+        window.addEventListener('keydown', (e) => { 
+            keys[e.code] = true;
+            if (e.code === 'ArrowLeft' || e.code === 'ArrowRight') player.isWalking = true;
+            if (e.code === 'Space' && player.onGround) player.isJumping = true;
+        });
+        window.addEventListener('keyup', (e) => {
+            keys[e.code] = false;
+            if (e.code === 'ArrowLeft' || e.code === 'ArrowRight') player.isWalking = false;
+        });
 
-/* INPUT */
-const keys={ArrowLeft:false,ArrowRight:false,Space:false};
-document.addEventListener("keydown",e=>keys[e.code]!==undefined&&(keys[e.code]=true));
-document.addEventListener("keyup",e=>keys[e.code]!==undefined&&(keys[e.code]=false));
-function bind(id,key){
-  const b=document.getElementById(id);
-  b.addEventListener("touchstart",e=>{e.preventDefault();keys[key]=true});
-  b.addEventListener("touchend",e=>{e.preventDefault();keys[key]=false});
-}
-bind("btnLeft","ArrowLeft");
-bind("btnRight","ArrowRight");
-bind("btnJump","Space");
+        // --- Drawing Logic ---
+        function drawMario() {
+            let sx = 0; // source x in sprite sheet (pixel column)
+            const sy = 0; // source y in sprite sheet (pixel row)
 
-/* GAME DATA */
-const player={x:20,y:90,w:8,h:10,vy:0,frame:0,dir:1,step:0};
-const groundY=110;
-const gravity=0.6;
-let onGround=false,victory=false;
+            // Determine the current animation state
+            if (player.isJumping) {
+                // Jump frame: assuming the 4th frame (index 3, starting at pixel 48)
+                sx = SPRITE_SIZE * 3; 
+            } else if (player.isWalking) {
+                // Walking frames: 0, 1, 2 (1st, 2nd, 3rd frames)
+                sx = SPRITE_SIZE * (frame % WALKING_FRAMES); 
+            } else {
+                // Idle frame: 0 (1st frame)
+                sx = 0; 
+            }
 
-const boxes=[
-  {x:60,y:70,hit:false,text:"27"},
-  {x:72,y:70,hit:false,text:"12"},
-  {x:84,y:70,hit:false,text:"2025"}
-];
-const mushroomBox={x:96,y:70};
-let mushroomHits=0;
+            ctx.drawImage(
+                marioSprite,
+                sx, sy, 
+                SPRITE_SIZE, SPRITE_SIZE, // Source (clip) dimensions
+                player.x, player.y - SPRITE_SIZE, // Destination position (Adjusted to draw from bottom up)
+                SPRITE_SIZE, SPRITE_SIZE // Destination dimensions
+            );
+        }
 
-const hole={x:120,w:20};
-const pyramid=[{x:170,y:95},{x:175,y:85},{x:180,y:75}];
-const flag={x:210,y:50,down:false};
-const castle={x:225,y:75};
+        // --- Game Loop ---
+        function update() {
+            // 1. Handle Movement
+            if (keys.ArrowLeft) {
+                player.x = Math.max(0, player.x - 2);
+            }
+            if (keys.ArrowRight) {
+                player.x = Math.min(canvas.width - SPRITE_SIZE, player.x + 2);
+            }
 
-let message="",msgTimer=0;
-const coins=[];
-const fireworks=[];
+            // 2. Update Frame Timer
+            frameTimer++;
+            if (frameTimer > FRAME_DURATION) {
+                frame++;
+                frameTimer = 0;
+            }
 
-/* HELPERS */
-function px(x,y,w,h,c){ctx.fillStyle=c;ctx.fillRect(x,y,w,h);}
+            // 3. Simple Jump (for demonstration)
+            if (player.isJumping) {
+                // This is where you would implement complex physics
+                player.y -= 5; // move up
+                if (player.y < canvas.height - SPRITE_SIZE * 5) { // reached max height
+                    player.isJumping = false;
+                    player.onGround = false;
+                }
+            } else if (!player.onGround) {
+                // Simple gravity
+                player.y += 3; // move down
+                if (player.y >= canvas.height) { // landed on "ground"
+                    player.y = canvas.height;
+                    player.onGround = true;
+                }
+            }
+        }
 
-/* BACKGROUND */
-function drawBackground(){
-  ctx.fillStyle="#5c94fc";
-  ctx.fillRect(0,0,256,144);
+        function draw() {
+            // Clear the canvas
+            ctx.fillStyle = '#6495ED'; // Sky blue background
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-  // Hills
-  px(20,95,40,20,"#4aa52e");
-  px(50,90,30,25,"#3b8f23");
+            // Draw a simple ground line
+            ctx.fillStyle = '#00AA00';
+            ctx.fillRect(0, canvas.height - 10, canvas.width, 10);
 
-  // Clouds
-  px(30,30,20,8,"#fff");
-  px(34,26,12,8,"#fff");
-  px(150,35,18,6,"#fff");
-}
+            // Draw the Mario sprite
+            if (marioSprite.complete) {
+                drawMario();
+            }
+        }
 
-/* MARIO */
-function drawMario(){
-  const walk = Math.floor(player.step/10)%2;
-  px(player.x,player.y,8,player.h,"#e52521");
-  px(player.x+2,player.y+2,4,3,"#ffcc99");
-  if(walk===0){
-    px(player.x,player.y+player.h-2,3,2,"#000");
-  } else {
-    px(player.x+5,player.y+player.h-2,3,2,"#000");
-  }
-}
+        function gameLoop() {
+            update();
+            draw();
+            // RequestAnimationFrame ensures smooth, browser-optimized animation
+            requestAnimationFrame(gameLoop); 
+        }
 
-/* UPDATE */
-function update(){
-  if(!victory){
-    if(keys.ArrowLeft){player.x-=1.2;player.dir=-1;player.step++;}
-    if(keys.ArrowRight){player.x+=1.2;player.dir=1;player.step++;}
-    if(keys.Space&&onGround){
-      player.vy=-6;
-      sounds.jump.play();
-      onGround=false;
-    }
-  }
-
-  player.vy+=gravity;
-  player.y+=player.vy;
-
-  onGround=false;
-  if(player.y+player.h>=groundY &&
-     !(player.x>hole.x && player.x<hole.x+hole.w)){
-    player.y=groundY-player.h;
-    player.vy=0;
-    onGround=true;
-  }
-
-  if(player.y>160){player.x=20;player.y=90;}
-
-  boxes.forEach(b=>{
-    if(!b.hit&&player.x+player.w>b.x&&player.x<b.x+8&&player.y<b.y+8&&player.y>b.y){
-      b.hit=true;
-      sounds.box.play();
-      message=b.text;msgTimer=90;
-      coins.push({x:b.x+2,y:b.y,vy:-2});
-    }
-  });
-
-  coins.forEach(c=>{c.y+=c.vy;c.vy+=0.2;});
-
-  if(player.x+player.w>mushroomBox.x&&player.x<mushroomBox.x+8&&
-     player.y<mushroomBox.y+8&&player.y>mushroomBox.y){
-    if(mushroomHits===0){
-      player.h=14;
-      sounds.power.play();
-      message="MY";
-    } else if(mushroomHits===1){
-      message="BIRTHDAY";
-    }
-    msgTimer=90;
-    mushroomHits++;
-  }
-
-  pyramid.forEach(p=>{
-    if(player.x+player.w>p.x&&player.x<p.x+8&&player.y+player.h>p.y){
-      player.y=p.y-player.h;
-      player.vy=0;
-      onGround=true;
-    }
-  });
-
-  if(player.x>flag.x&&!flag.down){sounds.flag.play();flag.down=true;}
-  if(flag.down&&flag.y<100)flag.y+=1;
-
-  if(player.x>castle.x&&!victory){
-    victory=true;sounds.win.play();
-    for(let i=0;i<120;i++)
-      fireworks.push({x:Math.random()*256,y:Math.random()*144,
-        vx:Math.random()*2-1,vy:-Math.random()*2,
-        c:`hsl(${Math.random()*360},100%,50%)`});
-  }
-}
-
-/* DRAW */
-function draw(){
-  drawBackground();
-
-  px(0,groundY,256,20,"#6b8e23");
-  px(hole.x,groundY,hole.w,20,"#000");
-
-  boxes.forEach(b=>!b.hit&&px(b.x,b.y,8,8,"#f7d51d"));
-  px(mushroomBox.x,mushroomBox.y,8,8,"#cfa600");
-
-  pyramid.forEach(p=>px(p.x,p.y,8,8,"#b5651d"));
-
-  px(flag.x,50,1,60,"#000");
-  px(flag.x+1,flag.y,6,4,"#e52521");
-  px(castle.x,castle.y,20,20,"#228b22");
-
-  coins.forEach(c=>px(c.x,c.y,4,4,"#ffd700"));
-
-  drawMario();
-
-  if(msgTimer>0){
-    ctx.fillStyle="#000";
-    ctx.font="8px monospace";
-    ctx.fillText(message,120,20);
-    msgTimer--;
-  }
-
-  if(victory){
-    fireworks.forEach(f=>{
-      f.x+=f.vx;f.y+=f.vy;
-      px(f.x,f.y,2,2,f.c);
-    });
-    ctx.fillStyle="#000";
-    ctx.font="8px monospace";
-    ctx.fillText("YOU ARE VICTORIOUS",60,50);
-    ctx.fillText("OFFICIALLY INVITED!",60,60);
-    ctx.fillText("Mit. Teodosij Gologanov 90",50,75);
-    ctx.fillText("17:30  27.12.2025",70,85);
-  }
-}
-
-function loop(){update();draw();requestAnimationFrame(loop);}
-loop();
-</script>
-
+        // Check if the image failed to load before the onload event fires
+        if (marioSprite.complete && marioSprite.naturalWidth !== 0) {
+            gameLoop();
+        }
+    </script>
 </body>
 </html>
