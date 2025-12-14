@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Mario Sprite Animation Demo</title>
+    <title>Mario Birthday Invitation!</title>
     <style>
         body {
             display: flex;
@@ -14,151 +14,436 @@
             background-color: #222;
         }
         canvas {
-            border: 4px solid #fff;
-            image-rendering: crisp-edges; /* For sharp pixel art scaling */
-            image-rendering: pixelated;
+            border: 4px solid #000;
+            background-color: #6495ED; /* Sky Blue */
+            image-rendering: pixelated; 
+            image-rendering: crisp-edges;
+        }
+        #messageBox {
+            position: absolute;
+            top: 20px;
+            font-size: 24px;
+            font-family: 'Courier New', monospace;
+            color: white;
+            background-color: rgba(0, 0, 0, 0.7);
+            padding: 10px 20px;
+            border-radius: 5px;
+            display: none;
+            z-index: 10;
+        }
+        #winningMessage {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            font-size: 30px;
+            font-family: 'Arial', sans-serif;
+            color: white;
+            background-color: #A00; /* Red for emphasis */
+            padding: 20px;
+            border: 5px solid yellow;
+            box-shadow: 0 0 20px black;
+            display: none;
+            text-align: center;
+            z-index: 20;
         }
     </style>
 </head>
 <body>
 
-    <canvas id="gameCanvas" width="320" height="240"></canvas>
+    <canvas id="gameCanvas" width="512" height="256"></canvas>
+    <div id="messageBox"></div>
+    <div id="winningMessage"></div>
 
     <script>
-        // --- Setup ---
+        // --- Game Setup ---
         const canvas = document.getElementById('gameCanvas');
         const ctx = canvas.getContext('2d');
-        
-        // Scale the canvas for better visibility of the small sprite
-        const SCALE = 3;
-        canvas.style.width = canvas.width * SCALE + 'px';
-        canvas.style.height = canvas.height * SCALE + 'px';
+        const messageBox = document.getElementById('messageBox');
+        const winningMessage = document.getElementById('winningMessage');
 
-        const SPRITE_SIZE = 16; // 16x16 pixels
-        const FRAME_DURATION = 8; // Update frame every 8 game loop cycles (slower is smoother)
+        // Constants
+        const TILE_SIZE = 16;
+        const SPRITE_SIZE = 16;
+        const FRAME_DURATION = 8;
         const WALKING_FRAMES = 3; 
+        const GROUND_Y = canvas.height - TILE_SIZE;
 
+        // Assets (Load the sprite sheet)
         const marioSprite = new Image();
-        marioSprite.src = "mario_sprites.png"; // **MUST be in the same directory**
-        marioSprite.onload = () => {
-            console.log("Sprite sheet loaded. Starting game loop.");
-            gameLoop(); // Start the loop only after the image is ready
-        };
-        marioSprite.onerror = () => {
-             console.error("Failed to load mario_sprites.png. Check the file path.");
-        };
+        // NOTE: You MUST supply a sprite sheet named 'mario_sprites.png'
+        marioSprite.src = "mario_sprites.png"; 
 
         // --- Game State ---
-        let frame = 0;
-        let frameTimer = 0;
-        
         const player = {
-            x: 50,
-            y: canvas.height - SPRITE_SIZE,
-            isWalking: false,
-            onGround: true,
-            isJumping: false
+            x: TILE_SIZE * 2,
+            y: GROUND_Y,
+            width: SPRITE_SIZE,
+            height: SPRITE_SIZE,
+            vx: 0,
+            vy: 0,
+            isBig: false,
+            onGround: true
         };
 
-        // Simple key state tracking
-        const keys = {};
+        let frame = 0;
+        let frameTimer = 0;
+        let messageState = 0; // Tracks which birthday number is displayed
+        let keys = {};
+        let gameActive = false;
+        let animationFrameId;
+
+        // Question Mark Boxes Data (x, y, message)
+        const Q_BOXES = [
+            { x: TILE_SIZE * 6, y: GROUND_Y - TILE_SIZE * 3, msg: '27', hit: false, type: 'date' },
+            { x: TILE_SIZE * 8, y: GROUND_Y - TILE_SIZE * 3, msg: '12', hit: false, type: 'month' },
+            { x: TILE_SIZE * 10, y: GROUND_Y - TILE_SIZE * 3, msg: '2025', hit: false, type: 'year' },
+            { x: TILE_SIZE * 12, y: GROUND_Y - TILE_SIZE * 3, msg: 'MUSHROOM', hit: false, type: 'powerup' },
+            { x: TILE_SIZE * 25, y: GROUND_Y - TILE_SIZE * 3, msg: 'MY', hit: false, type: 'message' },
+            { x: TILE_SIZE * 27, y: GROUND_Y - TILE_SIZE * 3, msg: 'BIRTHDAY', hit: false, type: 'message' }
+        ];
+
+        // Level Geometry (Platform: x, y, width, height)
+        const PLATFORMS = [
+            // Ground floor
+            { x: 0, y: GROUND_Y, width: TILE_SIZE * 15, height: TILE_SIZE }, 
+            // The Hole (Gap at x=15 to x=19)
+            { x: TILE_SIZE * 19, y: GROUND_Y, width: TILE_SIZE * 10, height: TILE_SIZE }, 
+            // Pyramid Base (Starts after second ground piece)
+            { x: TILE_SIZE * 29, y: GROUND_Y - TILE_SIZE, width: TILE_SIZE * 3, height: TILE_SIZE },
+            { x: TILE_SIZE * 30, y: GROUND_Y - TILE_SIZE * 2, width: TILE_SIZE, height: TILE_SIZE },
+            // Castle Platform
+            { x: TILE_SIZE * 33, y: GROUND_Y - TILE_SIZE * 2, width: TILE_SIZE * 8, height: TILE_SIZE },
+        ];
+        
+        // Final Goal
+        const FLAG_X = TILE_SIZE * 35;
+        const CASTLE_X = TILE_SIZE * 37;
+        let gameFinished = false;
+
+        // --- Input Handling ---
         window.addEventListener('keydown', (e) => { 
             keys[e.code] = true;
-            if (e.code === 'ArrowLeft' || e.code === 'ArrowRight') player.isWalking = true;
-            if (e.code === 'Space' && player.onGround) player.isJumping = true;
         });
         window.addEventListener('keyup', (e) => {
             keys[e.code] = false;
-            if (e.code === 'ArrowLeft' || e.code === 'ArrowRight') player.isWalking = false;
         });
+        
+        function handleInput() {
+            if (gameFinished) {
+                player.vx = 0;
+                return;
+            }
 
-        // --- Drawing Logic ---
+            // Horizontal Movement
+            if (keys.ArrowLeft) {
+                player.vx = -1.5;
+            } else if (keys.ArrowRight) {
+                player.vx = 1.5;
+            } else {
+                player.vx = 0;
+            }
+            
+            // Jumping (Space or Up Arrow)
+            if ((keys.Space || keys.ArrowUp) && player.onGround) {
+                player.vy = -7; // Jump strength
+                player.onGround = false;
+            }
+        }
+
+        // --- Drawing Functions ---
+
+        function drawCastle() {
+            const h = TILE_SIZE * 4;
+            const w = TILE_SIZE * 6;
+            const y = GROUND_Y - h;
+            const x = CASTLE_X;
+
+            // Castle body (Red Brick)
+            ctx.fillStyle = '#A00'; 
+            ctx.fillRect(x, y, w, h);
+            
+            // Turrets (White)
+            ctx.fillStyle = '#FFF'; 
+            ctx.fillRect(x, y, w, TILE_SIZE / 2); // Top ledge
+            ctx.fillRect(x + TILE_SIZE / 2, y - TILE_SIZE, TILE_SIZE, TILE_SIZE); // Left turret
+            ctx.fillRect(x + w - TILE_SIZE * 1.5, y - TILE_SIZE, TILE_SIZE, TILE_SIZE); // Right turret
+
+            // Entrance (Black)
+            ctx.fillStyle = '#000'; 
+            ctx.fillRect(x + w / 2 - TILE_SIZE / 2, y + h - TILE_SIZE * 1.5, TILE_SIZE, TILE_SIZE * 1.5);
+            
+            // The Invitation Sign (Text on the castle body)
+            ctx.fillStyle = 'yellow';
+            ctx.font = 'bold 8px Arial';
+            ctx.textAlign = 'center';
+            ctx.fillText("You have won", x + w / 2, y + TILE_SIZE * 1);
+            ctx.fillText("Invitation to my birthday party", x + w / 2, y + TILE_SIZE * 1.5);
+            ctx.fillText("at DREAM PARTY PLAYGROUND", x + w / 2, y + TILE_SIZE * 2);
+        }
+
+        function drawFlag() {
+            ctx.fillStyle = '#AAA'; // Pole
+            ctx.fillRect(FLAG_X, GROUND_Y - TILE_SIZE * 6, 2, TILE_SIZE * 4);
+            
+            ctx.fillStyle = 'red'; // Flag itself
+            ctx.beginPath();
+            ctx.moveTo(FLAG_X + 2, GROUND_Y - TILE_SIZE * 6);
+            ctx.lineTo(FLAG_X + 2 + TILE_SIZE, GROUND_Y - TILE_SIZE * 6);
+            ctx.lineTo(FLAG_X + 2, GROUND_Y - TILE_SIZE * 5);
+            ctx.fill();
+
+            // Draw player on the flag pole when finished
+            if (player.y > GROUND_Y - TILE_SIZE * 2 && player.x > FLAG_X - TILE_SIZE * 2) {
+                player.x = FLAG_X + TILE_SIZE; // Lock horizontal position
+            }
+        }
+
+        function drawBoxes() {
+            Q_BOXES.forEach(box => {
+                ctx.fillStyle = box.hit ? '#999' : '#FFD700'; // Gray if hit, Gold if active
+                ctx.fillRect(box.x, box.y, TILE_SIZE, TILE_SIZE);
+                
+                // Draw Question Mark
+                if (!box.hit) {
+                    ctx.fillStyle = '#000';
+                    ctx.font = 'bold 12px Arial';
+                    ctx.textAlign = 'center';
+                    ctx.fillText('?', box.x + TILE_SIZE / 2, box.y + TILE_SIZE - 3);
+                }
+            });
+        }
+
+        function drawPlatforms() {
+            ctx.fillStyle = '#00AA00'; // Green Ground
+            ctx.fillRect(0, GROUND_Y + 1, canvas.width, TILE_SIZE); 
+            
+            PLATFORMS.forEach(p => {
+                ctx.fillStyle = '#8B4513'; // Brown Blocks
+                ctx.fillRect(p.x, p.y, p.width, p.height);
+            });
+        }
+
         function drawMario() {
-            let sx = 0; // source x in sprite sheet (pixel column)
-            const sy = 0; // source y in sprite sheet (pixel row)
+            let sx = 0;
+            const sy = 0;
 
-            // Determine the current animation state
-            if (player.isJumping) {
-                // Jump frame: assuming the 4th frame (index 3, starting at pixel 48)
+            // Sprite logic to determine which frame to draw
+            if (!player.onGround || player.vy < 0) {
+                // Jumping/Falling frame: 4th frame (index 3)
                 sx = SPRITE_SIZE * 3; 
-            } else if (player.isWalking) {
-                // Walking frames: 0, 1, 2 (1st, 2nd, 3rd frames)
+            } else if (player.vx !== 0) {
+                // Walking frames: 0, 1, 2
                 sx = SPRITE_SIZE * (frame % WALKING_FRAMES); 
             } else {
-                // Idle frame: 0 (1st frame)
+                // Idle frame: 1st frame (index 0)
                 sx = 0; 
             }
+            
+            // If Mario is big, draw him at double height
+            const drawH = player.isBig ? SPRITE_SIZE * 2 : SPRITE_SIZE;
+            const drawW = player.isBig ? SPRITE_SIZE * 2 : SPRITE_SIZE;
 
             ctx.drawImage(
                 marioSprite,
                 sx, sy, 
-                SPRITE_SIZE, SPRITE_SIZE, // Source (clip) dimensions
-                player.x, player.y - SPRITE_SIZE, // Destination position (Adjusted to draw from bottom up)
-                SPRITE_SIZE, SPRITE_SIZE // Destination dimensions
+                SPRITE_SIZE, SPRITE_SIZE, 
+                player.x, player.y - drawH, // y adjusted for drawing from the ground up
+                drawW, drawH 
             );
         }
 
-        // --- Game Loop ---
+        // --- Game Logic ---
+
+        function updatePlayerSize() {
+            // Adjust player height based on state
+            player.height = player.isBig ? SPRITE_SIZE * 2 : SPRITE_SIZE;
+        }
+
+        function checkBlockCollision(box) {
+            // Check collision only if the player is moving upwards (hitting from below)
+            if (player.vy < 0) {
+                // Mario's head position
+                const playerHeadY = player.y - player.height;
+                
+                // Collision check (Simple Box Collision)
+                if (playerHeadY < box.y + TILE_SIZE && playerHeadY > box.y &&
+                    player.x + player.width > box.x && player.x < box.x + TILE_SIZE) {
+                    
+                    // Stop upward movement immediately after a hit
+                    player.vy = 0.5; // Starts falling immediately
+
+                    if (!box.hit) {
+                        handleBoxHit(box);
+                        return true;
+                    }
+                }
+            }
+            return false;
+        }
+
+        function handleBoxHit(box) {
+            box.hit = true;
+            messageBox.style.display = 'block';
+            
+            if (box.type === 'powerup') {
+                messageBox.textContent = "MAGIC MUSHROOM!";
+                player.isBig = true;
+                updatePlayerSize();
+            } else if (box.type === 'date' || box.type === 'month' || box.type === 'year') {
+                messageBox.textContent = box.msg;
+            } else if (box.type === 'message') {
+                if (Q_BOXES.filter(b => b.type === 'message' && b.hit).length === 1) {
+                     messageBox.textContent = "M Y";
+                } else if (Q_BOXES.filter(b => b.type === 'message' && b.hit).length === 2) {
+                     messageBox.textContent = "B I R T H D A Y";
+                }
+            }
+
+            // Hide message after a short delay
+            setTimeout(() => {
+                messageBox.style.display = 'none';
+            }, 1000);
+        }
+
+        function checkPlatformCollision(platform) {
+            // Simple bottom collision check
+            const nextX = player.x + player.vx;
+            const nextY = player.y + player.vy;
+            
+            if (nextY > platform.y - player.height && player.y <= platform.y - player.height &&
+                nextX < platform.x + platform.width && nextX + player.width > platform.x) {
+                
+                // Landed on platform
+                player.y = platform.y;
+                player.vy = 0;
+                player.onGround = true;
+                return true;
+            }
+            return false;
+        }
+
         function update() {
-            // 1. Handle Movement
-            if (keys.ArrowLeft) {
-                player.x = Math.max(0, player.x - 2);
+            handleInput();
+            
+            // 1. Apply gravity/movement if not on ground
+            if (!player.onGround) {
+                player.vy += 0.4; // Gravity
             }
-            if (keys.ArrowRight) {
-                player.x = Math.min(canvas.width - SPRITE_SIZE, player.x + 2);
+            player.x += player.vx;
+            player.y += player.vy;
+
+            // 2. Reset ground state and find collision
+            player.onGround = false;
+            let collidedPlatform = false;
+
+            // Check Question Block collisions
+            Q_BOXES.forEach(box => {
+                checkBlockCollision(box);
+            });
+            
+            // Check Platform collisions
+            PLATFORMS.forEach(platform => {
+                if (checkPlatformCollision(platform)) {
+                    collidedPlatform = true;
+                }
+            });
+            
+            // 3. Keep player within horizontal boundaries
+            player.x = Math.max(0, Math.min(canvas.width - player.width, player.x));
+            
+            // 4. Handle falling into the 'hole' (game boundary fallback)
+            if (!collidedPlatform && player.y >= canvas.height + player.height) {
+                 // Reset position after falling in the hole (Game Over/Retry state)
+                 player.x = TILE_SIZE * 2;
+                 player.y = GROUND_Y;
+                 player.vy = 0;
+                 player.onGround = true;
             }
 
-            // 2. Update Frame Timer
-            frameTimer++;
-            if (frameTimer > FRAME_DURATION) {
-                frame++;
-                frameTimer = 0;
+            // 5. Animation frame update (only if walking)
+            if (player.vx !== 0 && player.onGround) {
+                frameTimer++;
+                if (frameTimer > FRAME_DURATION) {
+                    frame++;
+                    frameTimer = 0;
+                }
+            } else if (player.onGround) {
+                frame = 0; // Reset to idle frame
+            }
+            
+            // 6. Win Condition (Touching the flag pole)
+            if (player.x >= FLAG_X && player.y > GROUND_Y - TILE_SIZE * 4 && !gameFinished) {
+                gameFinished = true;
+                player.vx = 0;
+                player.onGround = false;
+                player.vy = 2; // Start sliding down the pole
+                
+                // Show the winning message after sliding down
+                setTimeout(() => {
+                    winningMessage.style.display = 'block';
+                    winningMessage.innerHTML = `
+                        <p>🎉 YOU WIN! 🎉</p>
+                        <p>INVITATION:</p>
+                        <p>Join us on **27.12.2025**</p>
+                        <p>at DREAM PARTY PLAYGROUND!</p>
+                        <p style="font-size: 14px;">(Refresh to play again)</p>
+                    `;
+                }, 1500);
             }
 
-            // 3. Simple Jump (for demonstration)
-            if (player.isJumping) {
-                // This is where you would implement complex physics
-                player.y -= 5; // move up
-                if (player.y < canvas.height - SPRITE_SIZE * 5) { // reached max height
-                    player.isJumping = false;
-                    player.onGround = false;
-                }
-            } else if (!player.onGround) {
-                // Simple gravity
-                player.y += 3; // move down
-                if (player.y >= canvas.height) { // landed on "ground"
-                    player.y = canvas.height;
-                    player.onGround = true;
-                }
+            // 7. Stop player movement when won and standing on ground
+            if (gameFinished && player.y >= GROUND_Y) {
+                 player.vy = 0;
+                 player.y = GROUND_Y;
+                 player.onGround = true;
+                 // Lock player into the castle entrance
+                 player.x = CASTLE_X + TILE_SIZE * 2.5; 
             }
         }
 
         function draw() {
-            // Clear the canvas
-            ctx.fillStyle = '#6495ED'; // Sky blue background
-            ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-            // Draw a simple ground line
-            ctx.fillStyle = '#00AA00';
-            ctx.fillRect(0, canvas.height - 10, canvas.width, 10);
-
-            // Draw the Mario sprite
-            if (marioSprite.complete) {
+            // Clear canvas
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            drawPlatforms();
+            drawBoxes();
+            drawFlag();
+            drawCastle();
+            
+            // Only draw Mario if the asset is loaded
+            if (marioSprite.complete && marioSprite.naturalWidth !== 0) {
                 drawMario();
+            } else {
+                ctx.fillStyle = 'white';
+                ctx.font = '12px Arial';
+                ctx.fillText("Loading mario_sprites.png...", 10, 20);
             }
         }
 
         function gameLoop() {
+            updatePlayerSize();
             update();
             draw();
-            // RequestAnimationFrame ensures smooth, browser-optimized animation
-            requestAnimationFrame(gameLoop); 
+            animationFrameId = requestAnimationFrame(gameLoop); 
         }
 
-        // Check if the image failed to load before the onload event fires
+        // Start the game after the image loads
+        marioSprite.onload = () => {
+            gameActive = true;
+            gameLoop();
+        };
+        marioSprite.onerror = () => {
+             console.error("Failed to load mario_sprites.png. Ensure the file is present.");
+             gameLoop(); // Run anyway, showing load message
+        };
+
+        // If the image loaded before the script finished executing
         if (marioSprite.complete && marioSprite.naturalWidth !== 0) {
+            gameActive = true;
             gameLoop();
         }
+
     </script>
 </body>
 </html>
